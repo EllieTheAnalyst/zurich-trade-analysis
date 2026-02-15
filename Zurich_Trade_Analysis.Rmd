@@ -1,0 +1,779 @@
+---
+title: "Zurich Trade Analysis"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+# Core data manipulation and scales
+library(tidyverse)
+library(scales)
+
+# Visualization enhancements
+library(ggrepel)      # For non-overlapping labels
+library(sf)           # For geographic maps
+library(rnaturalearth) # For world map data
+library(countrycode)  # For harmonizing country names/ISO codes
+
+# Data Path Configuration
+trade_path <- "data/processed/1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv"
+
+# Load and clean the main dataset
+df <- readr::read_csv(trade_path, show_col_types = FALSE) %>%
+  mutate(
+    Trade_Type = tolower(Trade_Type),
+    Country = stringr::str_squish(Country),
+    Year = as.integer(Year)
+  )
+
+```
+
+# 1 Data and Methodological Framework
+
+## 1.1 Data Sources and Scope
+
+### 1.1.1 Primary Trade Dataset
+
+The primary dataset used in this project is *“Warenimporte und -exporte im Kanton Zürich”*, published on opendata.swiss by the Canton of Zurich. The dataset provides annual information on the value of goods imports and exports associated with the Canton of Zurich, disaggregated by partner country, industry classification, trade direction (import/export), and year.
+
+Trade values are reported in Swiss francs (CHF) and cover the period from 2016 to 2024. This temporal range enables the analysis of both long-term structural patterns and shorter-term fluctuations in Zurich’s international trade relationships. Due to its relatively high level of aggregation, the dataset is particularly well suited for macro-level and structural exploratory analysis, allowing the identification of dominant trading partners, sectoral specialisation, hierarchical trade relationships, and shifts in Zurich’s global economic positioning over time.
+
+### 1.1.2 Supplementary Economic Context
+
+To provide additional economic context for selected comparative interpretations, country-level GDP data were incorporated as supplementary information. These data were used to support qualitative interpretation of trade volumes and growth patterns rather than as direct inputs into statistical modelling.
+
+## 1.2 Analytical Workflow and Tooling
+
+### 1.2.1 Data Processing and Transformation
+
+All data cleaning, transformation, aggregation, and visualisation were conducted using the R programming language, primarily relying on the tidyverse ecosystem for data manipulation and ggplot2 for visual analytics. The analytical workflow was designed to support multi-scale perspectives on Zurich’s trade system, ranging from global spatial overviews to sectoral and temporal structural comparisons.
+
+### 1.2.2 Use of Computational Assistance
+
+Large language models (ChatGPT and Gemini) were used exclusively as auxiliary tools for code debugging, language refinement, and text structuring. All analytical design choices, data transformations, visualisations, and interpretations were developed, implemented, and validated independently by the authors.
+
+## 1.3 Research Design and Analytical Positioning
+
+This study is explicitly exploratory and structural in nature. Rather than aiming for causal inference or econometric prediction, the analysis focuses on identifying persistent patterns, hierarchies, and asymmetries in Zurich’s trade architecture through descriptive metrics and comparative visualisation.
+
+## 1.4 Methodology
+
+### 1.4.1 Data Processing and Harmonisation
+
+The raw trade data were cleaned, reshaped, and processed using the R programming language, primarily relying on the tidyverse ecosystem for data manipulation and ggplot2 for visualisation. Prior to analysis, the original dataset required substantial preprocessing.
+
+Country names were harmonised to ensure consistency across data joins and visualisations, particularly when integrating geographic reference files for the world maps. Numeric fields were converted to appropriate data types, and missing values were handled systematically. Duplicate or incomplete observations were identified and removed where necessary. In cases where multiple records existed for the same country–industry–year combination, trade values were aggregated to obtain a single, coherent observation. Where required, auxiliary datasets, such as geographic world shapes, were joined to the trade data using standardised country identifiers.
+
+### 1.4.2 Analytical Segmentation and Aggregation Strategy
+
+To reduce visual clutter and improve interpretability, the dataset was segmented in several ways prior to visualisation. Exports and imports were analysed separately for the global trade maps in order to preserve directional differences in Zurich’s trade relationships. For comparative analyses, subsets of trading partners were selected based on cumulative trade volume, resulting in focused views such as the top-10 or top-30 partner countries.
+
+Similarly, the most relevant industries were identified by total export value aggregated across the full observation period, allowing sectoral patterns to be highlighted without overloading the figures. Smaller country subsets were additionally used for detailed sector-level trend analyses.
+
+Several derived tables were constructed to support different analytical perspectives, including country-level aggregates for exports and imports, sector-level time series by country, total trade volumes aggregated across years, and summary statistics used to characterise growth and volatility. This selective aggregation strategy enabled a balance between comprehensive global coverage and clear, readable visualisations, particularly in multi-facet plots.
+
+### 1.4.3 Descriptive Metrics and Exploratory Modelling Approach
+
+Rather than employing complex econometric models, the analysis focused on a set of interpretable descriptive measures designed to support exploratory comparison. These included average annual growth rates of trade volumes, volatility measured as the standard deviation of year-to-year growth, and relative rankings of trade partners over time. Log-scaled transformations were applied where necessary to account for substantial differences in absolute trade volumes across countries and industries.
+
+These metrics were selected for their interpretability and robustness within an exploratory framework. They enable meaningful relative comparison across countries without imposing functional assumptions or model-based causality, which lies beyond the scope of this study. Accordingly, all visualisations emphasise structural patterns and comparative positioning rather than predictive precision, reinforcing the descriptive and narrative orientation of the analysis.
+
+# 2 Plots and Interpretation
+
+## 2.1 Global Trade Architecture: Spatial Structure of Zurich’s Trade Network
+
+The paired world maps provide a structural overview of Zurich’s global trade architecture by visualising cumulative exports and imports across the full observation period. Rather than emphasising short-term fluctuations, these maps reveal the geographic logic and asymmetry underlying Zurich’s integration into global trade networks.
+
+### 2.1.1 Export Structure: A Regional Core with Selective Global Reach
+
+```{r export_map_original_style, fig.width=10, fig.height=7, out.width="100%", fig.align='center'}
+library(sf)
+library(rnaturalearth)
+library(countrycode)
+
+# --- 1.Design Constants ---
+WARM_COLORS <- c("#120c02", "#5c2e00", "#c46a00", "#ffd166", "#fff4cc")
+
+smart_chf <- function() {
+  scales::label_number(
+    accuracy = 0.1, 
+    scale_cut = scales::cut_short_scale(), 
+    suffix = " CHF"
+  )
+}
+
+# --- 2. Data Preparation ---
+to_iso3_multi <- function(x) {
+  iso_en <- countrycode(x, origin = "country.name", destination = "iso3c")
+  iso_de <- countrycode(x, origin = "country.name.de", destination = "iso3c")
+  coalesce(iso_en, iso_de)
+}
+
+# Aggregate specifically for Exports
+export_totals <- df %>%
+  filter(Trade_Type == "export") %>%
+  group_by(Country) %>%
+  summarise(Total_CHF = sum(Total_Amount_CHF, na.rm = TRUE), .groups = "drop") %>%
+  mutate(iso3 = to_iso3_multi(Country)) %>%
+  mutate(iso3 = case_when(
+    str_detect(Country, regex("france|frankreich", ignore_case = TRUE)) ~ "FRA",
+    str_detect(Country, regex("russia", ignore_case = TRUE)) ~ "RUS",
+    TRUE ~ iso3
+  ))
+
+world <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  filter(continent != "Antarctica")
+
+# Your Zurich Point geometry
+zurich_sf <- st_as_sf(data.frame(long = 8.5417, lat = 47.3769), 
+                       coords = c("long", "lat"), crs = 4326)
+
+# --- 3. Plotting with your Design Logic ---
+ggplot(world %>% left_join(export_totals, by = c("iso_a3" = "iso3"))) +
+  # Map Base (Dark Navy Borders)
+  geom_sf(aes(fill = Total_CHF), color = "#1b2330", linewidth = 0.15) +
+  
+  # Your Zurich "Glow" Design
+  geom_sf(data = zurich_sf, shape = 21, size = 7.0, stroke = 0, alpha = 0.12, fill = "white") +
+  geom_sf(data = zurich_sf, shape = 21, size = 3.2, stroke = 0.7, fill = "white", color = "#0b0f14") +
+  
+  # Your Color Palette
+  scale_fill_gradientn(
+    colours = WARM_COLORS,
+    trans = "log10",
+    labels = smart_chf(),
+    na.value = "#0b0f14",
+    name = "Export Volume"
+  ) +
+  
+  # Theme Settings (PDF Adjusted)
+  theme_minimal() +
+  theme(
+    # Keeping the plot area dark as per your design
+    panel.background = element_rect(fill = "#0b0f14", color = NA),
+    plot.background  = element_rect(fill = "#0b0f14", color = NA),
+    panel.grid       = element_blank(),
+    axis.text        = element_blank(),
+    
+    # Legend and Text
+    plot.title    = element_text(color = "white", face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(color = "#cccccc", size = 11, hjust = 0.5, margin = margin(b = 15)),
+    legend.position = "bottom",
+    legend.title    = element_text(color = "white", face = "bold", size = 10),
+    legend.text     = element_text(color = "white", size = 9),
+    legend.key.width = unit(1.5, "cm")
+  ) +
+  labs(
+    title = "Zurich's Global Export Architecture",
+    subtitle = "Cumulative volumes (CHF) by destination country (2016-2024)"
+  )
+```
+Zurich’s export structure is anchored in a dense European core, with particularly high volumes directed towards neighbouring and economically integrated countries. This concentration reflects Zurich’s deep embedding within European value chains, where proximity, regulatory alignment, and long-standing industrial interdependencies facilitate stable and high-volume trade relationships.
+
+Beyond Europe, a limited number of global economic powers—most notably the United States and China, emerge as dominant non-European destinations. Their prominence indicates that Zurich’s export engine extends selectively into global markets where demand for high-value, technologically sophisticated goods is structurally entrenched. Overall, the export map reveals a hub-and-spoke configuration: a stable regional backbone complemented by targeted global corridors rather than diffuse worldwide expansion.
+
+### 2.1.2 Import Structure: Global Dispersion and Supply Chain Diversification
+
+```{r import_map_original_style, fig.width=10, fig.height=7, out.width="100%", fig.align='center'}
+library(sf)
+library(rnaturalearth)
+library(countrycode)
+
+# --- 1.Design Constants ---
+WARM_COLORS <- c("#120c02", "#5c2e00", "#c46a00", "#ffd166", "#fff4cc")
+
+# Custom label function from your script
+smart_chf <- function() {
+  scales::label_number(
+    accuracy = 0.1, 
+    scale_cut = scales::cut_short_scale(), 
+    suffix = " CHF"
+  )
+}
+
+# --- 2. Data Preparation ---
+to_iso3_multi <- function(x) {
+  iso_en <- countrycode(x, origin = "country.name", destination = "iso3c")
+  iso_de <- countrycode(x, origin = "country.name.de", destination = "iso3c")
+  coalesce(iso_en, iso_de)
+}
+
+map_data <- df %>%
+  filter(Trade_Type == "import") %>%
+  group_by(Country) %>%
+  summarise(Total_CHF = sum(Total_Amount_CHF, na.rm = TRUE), .groups = "drop") %>%
+  mutate(iso3 = to_iso3_multi(Country)) %>%
+  mutate(iso3 = case_when(
+    str_detect(Country, regex("france|frankreich", ignore_case = TRUE)) ~ "FRA",
+    str_detect(Country, regex("russia", ignore_case = TRUE)) ~ "RUS",
+    TRUE ~ iso3
+  ))
+
+world <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  filter(continent != "Antarctica")
+
+# Your Zurich point design
+zurich_sf <- st_as_sf(data.frame(long = 8.5417, lat = 47.3769), 
+                       coords = c("long", "lat"), crs = 4326)
+
+# --- 3. Plotting with your original Style ---
+ggplot(world %>% left_join(map_data, by = c("iso_a3" = "iso3"))) +
+  # Map Base
+  geom_sf(aes(fill = Total_CHF), color = "#1b2330", linewidth = 0.15) +
+  
+  # Your Zurich "Glow" + Dot
+  geom_sf(data = zurich_sf, shape = 21, size = 7.0, stroke = 0, alpha = 0.12, fill = "white") +
+  geom_sf(data = zurich_sf, shape = 21, size = 3.2, stroke = 0.7, fill = "white", color = "#0b0f14") +
+  
+  # Your Color Scale
+  scale_fill_gradientn(
+    colours = WARM_COLORS,
+    trans = "log10",
+    labels = smart_chf(),
+    na.value = "#0b0f14",
+    name = "Total CHF"
+  ) +
+  
+  # Your Theme Logic
+  theme_minimal() +
+  theme(
+    plot.background  = element_rect(fill = "#0b0f14", color = NA),
+    panel.background = element_rect(fill = "#0b0f14", color = NA),
+    panel.grid       = element_blank(),
+    axis.text        = element_blank(),
+    
+    plot.title    = element_text(color = "white", face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(color = "#cccccc", size = 11, hjust = 0.5, margin = margin(b = 20)),
+    
+    legend.position = "bottom",
+    legend.title    = element_text(color = "white", face = "bold", size = 10),
+    legend.text     = element_text(color = "white", size = 9),
+    legend.key.width = unit(1.5, "cm")
+  ) +
+  labs(
+    title = "Zurich's Global Import Architecture",
+    subtitle = "Cumulative volumes (CHF) by partner country (2016-2024)"
+  )
+```
+
+The import map displays a markedly broader spatial footprint. While Europe remains the dominant source of imports, inbound trade volumes are more evenly distributed across Asia, the Americas, and parts of Africa. This dispersion suggests that Zurich’s economy draws on a globally diversified supplier base, sourcing raw materials, intermediate goods, and specialised inputs beyond its immediate regional environment.
+
+Compared to exports, imports therefore exhibit a higher degree of geographic diversification, pointing to a structural asymmetry: Zurich concentrates its export activity on a limited set of high-capacity markets while maintaining a wide, globally distributed network of suppliers. This pattern indicates a deliberate reliance on international supply chains as a stabilising mechanism.
+
+### 2.1.3 Structural Synthesis
+
+Taken together, the paired maps reveal a dual architecture. Zurich operates as a regionally embedded exporter within Europe while functioning as a globally integrated importer across continents. This asymmetric configuration suggests a trade model in which value creation is regionally concentrated, while resilience is achieved through broad-based global sourcing. These spatial foundations provide essential context for the subsequent analyses of trade dynamics, rankings, and volatility.
+
+## 2.2 Growth–Volatility Landscape: Stability versus Dynamism
+
+The growth–volatility scatter plot positions Zurich’s top 30 trade partners within a two-dimensional structural space defined by average growth and growth volatility, with bubble size representing cumulative trade volume. This configuration allows for the simultaneous assessment of scale, stability, and dynamism within Zurich’s trade portfolio.
+
+```{r growth_volatility_plot, fig.width=10, fig.height=7, fig.align='center', out.width="100%"}
+library(ggrepel)
+
+# --- 1. Calculate Growth and Volatility Metrics ---
+country_dynamics <- df %>%
+  group_by(Country, Year) %>%
+  summarise(Annual_Total = sum(Total_Amount_CHF, na.rm = TRUE), .groups = "drop_last") %>%
+  arrange(Country, Year) %>%
+  mutate(
+    Growth_Rate = (Annual_Total - lag(Annual_Total)) / lag(Annual_Total)
+  ) %>%
+  filter(!is.na(Growth_Rate)) %>%
+  summarise(
+    Avg_Growth = mean(Growth_Rate, na.rm = TRUE),
+    Volatility = sd(Growth_Rate, na.rm = TRUE),
+    Cumulative_Volume = sum(Annual_Total, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# --- 2. Filter for Top 30 Partners for Clarity ---
+top_30_partners <- country_dynamics %>%
+  slice_max(Cumulative_Volume, n = 30)
+
+# --- 3. Create the Scatter Plot ---
+ggplot(top_30_partners, aes(x = Avg_Growth, y = Volatility)) +
+  # Reference lines
+  geom_hline(yintercept = mean(top_30_partners$Volatility), linetype = "dashed", color = "gray80", alpha = 0.5) +
+  geom_vline(xintercept = mean(top_30_partners$Avg_Growth), linetype = "dashed", color = "gray80", alpha = 0.5) +
+  # Bubbles
+  geom_point(aes(size = Cumulative_Volume, fill = Avg_Growth), shape = 21, color = "white", alpha = 0.8) +
+  # Non-overlapping Labels
+  geom_text_repel(aes(label = Country), size = 4, box.padding = 0.3) +
+  # Formatting
+  scale_size_continuous(range = c(3, 15), labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  scale_fill_gradientn(colors = c("#1F4E79", "#ffd166", "#c46a00")) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Growth vs. Volatility Landscape (Top 30 Partners)",
+    subtitle = "Bubble size represents cumulative trade volume; axes show average YoY growth and standard deviation",
+    x = "Average Annual Growth Rate",
+    y = "Growth Volatility (SD of Growth)",
+    size = "Total Volume (CHF)",
+    fill = "Growth"
+  ) +
+  theme_minimal(base_size = 14) + # Increased base size for PDF readability
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold", size = 16) # Fixed nested syntax here
+  )
+
+```
+
+A dense cluster of core partners, including Germany, the United States, the Netherlands, France, and Austria, emerges close to the origin of the plot. These countries combine large trade volumes with low volatility and moderate growth, indicating highly mature and predictable trade relationships. Their position suggests that Zurich’s economic backbone is supported by structurally reliable partners rather than high-growth, high-risk markets.
+
+In contrast, several peripheral partners occupy more extreme positions. Countries such as South Africa and Mexico display comparatively strong average growth but elevated volatility, signalling expansion potential coupled with instability. Other partners, including Hong Kong SAR China and Russia, appear high on the volatility axis despite limited or negative growth, reflecting episodic or shock-sensitive trade dynamics.
+
+Overall, the plot exposes a clear core–periphery structure. Zurich’s largest trade relationships prioritise stability over acceleration, while growth opportunities are concentrated among smaller, more volatile partners. This configuration suggests a deliberate balancing act: a stable economic core underpinned by exploratory engagement at the margins.
+
+## 2.3 Hierarchical Stability: Evolution of Top Trade Partners
+
+```{r bump_chart, fig.width=8, fig.height=5, out.width="100%"}
+# --- Configuration ---
+trade_focus <- "export" # Matches the lowercase 'Trade_Type' from your setup
+top_n <- 10
+
+# --- Aggregate and Rank ---
+year_country <- df %>%
+  filter(Trade_Type == trade_focus) %>%
+  group_by(Year, Country) %>%
+  summarise(value = sum(Total_Amount_CHF, na.rm = TRUE), .groups = "drop")
+
+# Identify countries that hit Top 10 at least once
+top_countries <- year_country %>%
+  group_by(Year) %>%
+  slice_max(value, n = top_n, with_ties = FALSE) %>%
+  ungroup() %>%
+  distinct(Country) %>%
+  pull(Country)
+
+# Calculate Rankings
+ranked <- year_country %>%
+  filter(Country %in% top_countries) %>%
+  group_by(Year) %>%
+  mutate(rank = dense_rank(desc(value))) %>%
+  ungroup() %>%
+  filter(rank <= top_n)
+
+# Determine Top 5 by average rank for visual emphasis
+top5 <- ranked %>%
+  group_by(Country) %>%
+  summarise(avg_rank = mean(rank, na.rm = TRUE), .groups = "drop") %>%
+  arrange(avg_rank) %>%
+  slice(1:5) %>%
+  pull(Country)
+
+# Prepare full dataset for smooth lines
+years_full <- sort(unique(ranked$Year))
+countries_in_plot <- unique(ranked$Country)
+
+# Color Assignment
+color_groups <- rep(c("Green", "Blue", "Black"), length.out = length(countries_in_plot))
+names(color_groups) <- sort(countries_in_plot)
+
+ranked_full <- ranked %>%
+  select(Year, Country, rank) %>%
+  complete(Year = years_full, Country, fill = list(rank = NA_integer_)) %>%
+  mutate(
+    importance = if_else(Country %in% top5, "Top 5", "Other"),
+    line_width = if_else(importance == "Top 5", 1.5, 0.7),
+    color_group = color_groups[Country]
+  )
+
+# Palette
+palette <- c("Green" = "#1B8A3A", "Blue" = "#1F4E79", "Black" = "#222222")
+
+# --- Plotting ---
+ggplot(ranked_full, aes(x = Year, y = rank, group = Country)) +
+  geom_line(aes(color = color_group, linewidth = line_width), alpha = 0.8, na.rm = TRUE) +
+  geom_point(data = filter(ranked_full, !is.na(rank)), aes(color = color_group), size = 2) +
+  scale_color_manual(values = palette) +
+  scale_linewidth_identity() +
+  scale_y_reverse(breaks = 1:top_n) +
+  scale_x_continuous(breaks = years_full, expand = expansion(mult = c(0.05, 0.15))) +
+  geom_text_repel(
+    data = ranked_full %>% filter(Year == max(years_full), !is.na(rank)),
+    aes(label = Country, color = color_group),
+    nudge_x = 0.5, direction = "y", hjust = 0, size = 3.5, segment.alpha = 0.2
+  ) +
+  labs(
+    title = "Evolution of Zurich's Top 10 Export Partners",
+    subtitle = "Rankings based on annual export volume (CHF), 2016–2024",
+    x = NULL, y = "Rank"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.position = "none",
+    plot.margin = margin(10, 50, 10, 10)
+  )
+
+```
+
+The bump chart traces the relative ranking of Zurich’s top ten export partners between 2016 and 2024, revealing the temporal stability of the trade hierarchy.
+
+Germany and the United States form an immovable apex, consistently occupying the first and second ranks throughout the entire period. Their uninterrupted dominance indicates deep structural integration rather than cyclical or opportunistic trade relationships. Countries such as the Netherlands and China fluctuate modestly within the upper tier, suggesting sustained relevance accompanied by adaptive sectoral dynamics.
+
+Greater volatility is observed among mid-ranked partners, including Italy and France, whose positions shift repeatedly over time. These movements indicate sensitivity to sector-specific developments and short-term economic conditions. Lower-ranked partners, such as India, the United Kingdom, and Singapore, exhibit the highest degree of rank instability, frequently entering and exiting the top tier.
+
+The chart therefore reveals a stratified trade hierarchy: a highly stable core of indispensable partners surrounded by a competitive and fluid periphery. This structure reinforces the interpretation of Zurich’s export system as one anchored by a small number of long-term strategic relationships.
+
+## 2.4 Line Chart: Trade Intensity
+
+The multi-facet line plot examines Zurich’s export composition across major partner countries, disaggregated by industry and observed over time. By employing country-specific y-scales, the analysis foregrounds within-country structural dynamics rather than absolute cross-country comparisons.
+
+## 2.4 Line Chart: Trade Intensity
+
+```{r sector_trends_by_country, fig.width=13, fig.height=8.5, out.width="100%", fig.align="center", message=FALSE, warning=FALSE}
+# -----------------------------
+# Plot 4 — Sector Trends by Country (Export)
+# Zurich Export: Sector Trends by Country (2016–2024)
+# -----------------------------
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# 1) Export only
+df_exp <- df %>%
+  filter(Trade_Type == "export")
+
+# 2) Normalize country labels robustly (German/English/abbreviations)
+df_exp_norm <- df_exp %>%
+  mutate(
+    Country_norm = case_when(
+      # China
+      Country %in% c("China", "People's Republic of China") ~ "China",
+      grepl("^chin", Country, ignore.case = TRUE) ~ "China",
+
+      # France
+      Country %in% c("France", "Frankreich") ~ "France",
+      grepl("^fran", Country, ignore.case = TRUE) ~ "France",
+
+      # Germany
+      Country %in% c("Germany", "Deutschland") ~ "Germany",
+      grepl("^deut", Country, ignore.case = TRUE) ~ "Germany",
+      grepl("^germ", Country, ignore.case = TRUE) ~ "Germany",
+
+      # Italy
+      Country %in% c("Italy", "Italien") ~ "Italy",
+      grepl("^ital", Country, ignore.case = TRUE) ~ "Italy",
+
+      # United States
+      Country %in% c("United States", "United States of America", "USA", "U.S.A.", "US", "U.S.", "Vereinigte Staaten") ~ "United States",
+      grepl("united states", Country, ignore.case = TRUE) ~ "United States",
+      grepl("\\busa\\b|\\bu\\.s\\.?a?\\b", Country, ignore.case = TRUE) ~ "United States",
+      grepl("vereinigte", Country, ignore.case = TRUE) ~ "United States",
+
+      TRUE ~ NA_character_
+    )
+  )
+
+# 3) Keep exactly the 5 countries shown in the visual
+keep_countries <- c("China", "France", "Germany", "Italy", "United States")
+
+df_5 <- df_exp_norm %>%
+  filter(Country_norm %in% keep_countries)
+
+# 4) Top industries by total export volume (across these 5 countries + all years)
+top_industries <- df_5 %>%
+  group_by(Industry) %>%
+  summarise(total = sum(Total_Amount_CHF, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(total, n = 6, with_ties = FALSE) %>%
+  pull(Industry)
+
+# 5) Aggregate yearly totals for plotting
+df_plot <- df_5 %>%
+  filter(Industry %in% top_industries) %>%
+  mutate(Year = as.integer(Year)) %>%
+  group_by(Year, Country_norm, Industry) %>%
+  summarise(Total_Amount_CHF = sum(Total_Amount_CHF, na.rm = TRUE), .groups = "drop")
+
+# 6) Industry labels (German -> English to match legend)
+df_plot_final <- df_plot %>%
+  mutate(
+    Industry_label = recode(
+      as.character(Industry),
+      "Chemische Erzeugnisse" = "Chemical products",
+      "Datenverarbeitungsgeräte, elektronische und optische Erzeugnisse" = "Electronics & optical products",
+      "Elektrische Ausrüstungen" = "Electrical equipment",
+      "Maschinen" = "Machinery",
+      "Metalle" = "Metals",
+      "Waren, a.n.g." = "Other goods (n.e.c.)",
+      .default = as.character(Industry)
+    ),
+    Industry_label = factor(Industry_label),
+
+    # ---- FACET FIX ----
+    # ggplot error complained about missing `Country`, so we create it explicitly
+    Country = factor(Country_norm, levels = keep_countries)
+  ) %>%
+  group_by(Country, Industry_label) %>%
+  filter(n_distinct(Year[!is.na(Total_Amount_CHF)]) >= 2) %>%
+  ungroup()
+
+# 7) Dark-mode palette (close to your screenshot)
+sector_palette <- c(
+  "Chemical products"              = "#E07A5F",
+  "Electronics & optical products" = "#F2CC8F",
+  "Electrical equipment"           = "#81B29A",
+  "Machinery"                      = "#4EA8DE",
+  "Metals"                         = "#8DA9C4",
+  "Other goods (n.e.c.)"           = "#B089C6"
+)
+
+# 8) X-axis breaks every 2 years
+year_breaks <- seq(
+  min(df_plot_final$Year, na.rm = TRUE),
+  max(df_plot_final$Year, na.rm = TRUE),
+  by = 2
+)
+
+# 9) Dark theme for facets
+theme_dark_facets <- theme_minimal(base_size = 13) +
+  theme(
+    plot.background   = element_rect(fill = "#0B0F14", colour = NA),
+    panel.background  = element_rect(fill = "#0B0F14", colour = NA),
+    legend.background = element_rect(fill = "#0B0F14", colour = NA),
+    legend.key        = element_rect(fill = "#0B0F14", colour = NA),
+
+    text = element_text(colour = "#E8EEF5"),
+    plot.title = element_text(face = "bold", colour = "#E8EEF5", size = 22),
+    plot.subtitle = element_text(colour = "#B8C2CC", size = 14),
+    strip.text = element_text(face = "bold", colour = "#E8EEF5", size = 14),
+
+    axis.title = element_text(colour = "#E8EEF5", size = 16),
+    axis.text  = element_text(colour = "#C9D2DC", size = 12),
+
+    panel.grid.major = element_line(colour = "#1B2631", linewidth = 0.35),
+    panel.grid.minor = element_blank(),
+
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold", size = 14, colour = "#E8EEF5"),
+    legend.text = element_text(size = 12, colour = "#E8EEF5"),
+
+    panel.spacing = unit(1.1, "lines")
+  )
+
+# 10) Plot
+ggplot(df_plot_final, aes(x = Year, y = Total_Amount_CHF, colour = Industry_label, group = Industry_label)) +
+  geom_line(linewidth = 1.7, alpha = 0.92, na.rm = TRUE) +
+  geom_point(size = 1.4, alpha = 0.75, na.rm = TRUE) +
+  facet_wrap(~ Country, scales = "free_y") +
+  scale_x_continuous(breaks = year_breaks) +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  scale_colour_manual(values = sector_palette, drop = FALSE) +
+  labs(
+    title = paste0(
+      "Zurich Export: Sector Trends by Country (",
+      min(df_plot_final$Year, na.rm = TRUE), "–",
+      max(df_plot_final$Year, na.rm = TRUE), ")"
+    ),
+    subtitle = "Top industries by total volume • Facets use free y-scales",
+    x = NULL,
+    y = "Total amount (CHF)",
+    colour = "Industry"
+  ) +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE)) +
+  theme_dark_facets
+```
+
+### 2.4.1 China: Concentrated Technological Dependence
+
+Exports to China are overwhelmingly concentrated in machinery and electronics & optical products. Both sectors exhibit sustained upward trajectories, with electronics accelerating sharply after 2021. Other industries remain marginal, indicating a highly focused export relationship driven by China’s demand for advanced industrial technologies.
+
+### 2.4.2 France: Diversified but Volatile Composition
+
+France displays a comparatively balanced sectoral structure, with machinery and electronics alternating in dominance. Pronounced volatility—particularly in metals—suggests episodic demand rather than steady structural dependence. The export relationship is diversified but less predictable, reflecting sensitivity to short-term industrial cycles.
+
+### 2.4.3 Germany: Diversified Stability
+
+Germany emerges as Zurich’s most structurally stable export market. High and steady volumes across machinery, electronics, and electrical equipment indicate deep industrial integration. Limited volatility across sectors points to a resilient, multi-pillar relationship that cushions sector-specific shocks.
+
+### 2.4.4 Italy: Sector-Specific Dependency
+
+Exports to Italy are dominated by extreme volatility in metals, particularly after 2021, while other sectors remain comparatively small. This pattern suggests a narrow, event-driven export structure rather than broad-based integration.
+
+### 2.4.5 United States: Dynamic but Unstable
+
+The United States exhibits the highest overall sectoral volatility. Electronics, other goods, and metals show sharp episodic spikes, while machinery follows a steadier growth path. This combination indicates a high-value but cycle-sensitive export relationship influenced by market conditions and discrete trade events.
+
+### 2.4.6 Cross-Country Synthesis
+
+Across all partners, machinery and electronics & optical products form the structural backbone of Zurich’s export engine. However, the degree of diversification and volatility varies markedly. Germany represents a model of stable integration, while Italy and the United States illustrate sectorally concentrated and more volatile dependencies. These contrasts underscore the importance of temporal and sectoral disaggregation when interpreting aggregate trade figures.
+
+## 2.5 Heatmap: Zurich Trade versus GDP
+
+To move beyond traditional trade metrics, this section introduces a structural macro-economic study that utilizes trade flows as a proxy for the global economic footprint of the Canton of Zurich. By shifting the analytical focus from absolute volume toward industrial and regional architecture, the study uncovers the specific role the Canton occupies within the prevailing global economic order.
+
+#INSERT PLOT HERE
+
+### 2.5.1 Analytical Framework and Data Architecture
+
+The transformation of raw industrial data into a high-level economic study was facilitated by a four-stage methodological pipeline designed to ensure mathematical rigor and interpretive clarity. The initial phase involved the implementation of an "Active Partner" filter, which purged all non-reporting fields and zero-value trade rows to eliminate the skewing effects of "Ghost Markets" and provide the stability required for logarithmic transformations.
+
+Multidimensional scaling was applied using a "Triple-Lens View" to reveal distinct economic patterns across three scales: a normal scale to identify the "Giants" of absolute power, a logarithmic scale to reveal "Systemic Equality," and a zoom scale to isolate the "Emerging Engines" of strategic growth. Pivot modeling was then utilized to reshape raw long-format data into a wide format, establishing an Export-vs-Import axis for every trading partner to measure trade balance symmetry rather than just volume. The final stage employed temporal heat-mapping to plot volumes against a nine-year timeline from 2016 to 2024, creating a visual gradient of Zurich's economic world order.
+
+### 2.5.2 Structural Revelations and Market Dynamics
+
+The most prominent finding, identified as the Trade Corridor symmetry, emerged from a log-log scatter plot analysis where nearly all trading partners clustered within a tight, diagonal corridor. This confirms that Zurich does not maintain extractive, one-way relationships; instead, a strong scaling law is at play where a partner's capacity to export back to the Canton grows in direct proportion to its imports from Zurich. Consequently, Zurich is positioned as an integrated economic partner rather than a mere supplier, with any significant deviations representing untapped potential or trade barriers.
+
+Analysis into baseline resilience through log-transformed heatmaps indicates that Zurich’s economy is anchored by broad-base stability, with trade intensity remaining consistent across the top 50 partners even during the global shocks of 2020. While major Giants provide high volume, mid-tier partners provide the structural reliability that cushions the Canton against volatility. Finally, zooming into partners ranked 21–60 identified an Engine Room of countries currently in a High-Intensity Growth Phase. These nations represent the future pillars of Zurich's wealth, occupying a "sweet spot" where established supply chains meet expanding trade presence.
+
+### 2.5.3 Strategic Synthesis and Conclusion
+
+Zurich operates as a specialized specialist supported by a global safety net, selling high-complexity high-tile goods like Pharmaceuticals and Tech while maintaining stability through a vast mosaic of imported needs. The structural analysis highlights that as long as the Symmetry Corridor remains tight and the logarithmic intensity of the trade network remains consistent across mid-tier partners, Zurich’s economic foundation remains exceptionally sound. The study concludes that the Canton's resilience is fundamentally rooted in its diverse Rainbow Effect of imports and the deep integration of its export engine into global value chains.
+
+## 2.6 Spider Plot: Regionwise Trade Shifts
+
+Zurich’s global trade is characterized as a living system subject to constant structural transformation. To capture these dynamics, Section 2.6 utilizes Evolutionary Radar Plotting, a method designed to transcend isolated year-over-year comparisons and expose the long-term Structural Drift of the Canton’s economic influence.
+
+#INSERT PLOT HERE
+
+### 2.6.1 Methodological Construction of the "Time-Travel" Radar Framework
+
+Standard economic reports often rely on static snapshots that frequently obscure critical signals of structural change. To address this, we leveraged the full 2016–2024 timeline from our primary dataset to identify whether a region is simply increasing its purchase volumes or fundamentally shifting what it buys. This process involved selecting the top six export industries by 2024 volume and calculating their percentage share per continent in both the 2016 baseline and the 2024 current state.
+
+The resulting dual-layer radar charts utilise a specific visual grammar to make these temporal shifts immediately clear to any observer. A red dashed line represents the 2016 economic baseline, serving as the historical starting point, while a green filled area represents the 2024 economic footprint. This overlay allows for an immediate identification of expansion, where the green area stretches beyond the red line, and drift, where the overall shape of the trade web changes to favor new industrial priorities.
+
+### 2.6.2 Interpretation of Continental Trade DNA
+
+
+The radar webs illustrate two primary phenomena that define Zurich's global reach: Expansion and Specialization. In mature markets like Europe and the Americas, the webs appear most circular, with the green area expanding almost uniformly across all six industry axes since 2016. This balanced roundness suggests highly resilient relationships where maturity in the market allows for cross-sectoral support; for instance, a downturn in the pharmaceutical sector can be mitigated by stability in machinery or metal exports, ensuring a steady economic pulse.
+
+In contrast, Asia has undergone a massive and aggressive expansion specifically along the Machinery and Electronics axes. This represents a profound structural pivot where Asia has transitioned from an emerging destination into a dominant, specialized customer for Zurich’s most complex technical engineering exports. Similarly, Africa and Oceania exhibit sharp, narrow needle spikes that have elongated significantly since the baseline year. While this growth is impressive, the spike shape indicates a tactical market where Zurich has gained a foothold but remains dangerously concentrated in a few sectors, resulting in higher economic vulnerability if those specific industries face a downturn.
+
+### 2.6.3 Future-Looking Posture
+
+The cumulative evidence suggests that Zurich is successfully transitioning from a generalist supplier into a critical Technological Pillar for the global economy. While Europe remains a stable and diversified core, emerging markets are showing aggressive spikes in high-value sectors, making Zurich indispensable in global supply chains for specialized machinery and chemicals. This shift proves that Zurich’s value is increasingly tied to its specialized knowledge and precision manufacturing rather than simple commodity trade.
+
+To maintain this momentum, Zurich can adopt a dual-track approach that balances defense with expansion. In mature markets like Europe and the Americas, the priority is retention and preserving the round web shape to guard against sector-specific recessions. In high-growth tactical markets like Africa or Oceania, Zurich can leverage its current dominance in Machinery to cross-sell into the empty spaces of the radar web, such as Electronics or Pharmaceuticals. By filling in these gaps, Zurich can transform narrow, vulnerable spikes into broad and resilient strategic partnerships.
+
+## 2.7 Global Mirror: Zurich’s Strategic Market Archetypes
+
+The next stage of this research synthesises the macro-economic fingerprint of Zurich’s global trade by transitioning from traditional linear observations to structural multidimensional mapping. By utilizing 100-tile waffle matrices alongside multi-scale scatter and heatmap visualizations, the study shifts from a volume-centric perspective to one focused on the Canton’s underlying structural wiring.
+
+#INSERT PLOT HERE
+
+### 2.7.1 Technical Architecture
+
+Traditional economic reporting frequently prioritizes aggregate growth, which often obscures critical structural vulnerabilities. This study specifically sought to visualize industrial colonization, whereby high-tech sectors such as pharmaceuticals systematically displace traditional manufacturing within a region's economic profile. Furthermore, the application of logarithmic scaling allowed for an assessment of whether relationships with smaller nations follow the same scaling laws as those with major economic powers, while heat-mapping provided a metric for systemic resilience across the entire global network during exogenous shocks. The underlying data model relied on a total-market normalization engine, which purged non-reporting fields and standardized thirty-eight fragmented industrial categories into concise sectoral pillars. To ensure mathematical precision in the structural grids, a seat-allocation algorithm based on the largest remainder method was implemented, preventing rounding errors from obscuring the presence of rising star industries. Finally, data was processed through a triple-lens perspective involving normal scales for absolute power, logarithmic scales for systemic equality, and zoom scales for strategic ROI.
+
+### 2.7.2 Market Revelations
+
+The synthesis of these models revealed a profound contrast between Zurich’s export and import architectures. The dual-waffle analysis characterizes the Canton as a Global Refiner, operating a highly concentrated and specialized export engine while maintaining a diversified heart on the import side. This structural asymmetry is further validated by the log-log scatter plot, which identifies a consistent diagonal Trade Corridor applicable to nearly every partner country. This confirms the existence of a strong scaling law where Zurich functions as a deeply integrated economic partner rather than a mere vendor; as a country increases its imports from the Canton, it scales its own exports back in a near-perfect ratio. Moreover, log-transformed heatmaps demonstrate that the intensity of these trade lanes remained consistent even through the 2020 global recession, suggesting that Zurich's economic security is derived from the structural durability of the network as a whole rather than its largest individual partners.
+
+### 2.7.3 Strategic Synthesis and Systemic Conclusion
+
+The structural evidence suggests that Zurich has entered a Golden Cage economy, characterized by a high floor of guaranteed income due to global dependence on its specialized outputs, yet constrained by a low ceiling where dominant sectors leave little room for emerging industrial growth. In Western markets, the concentration of pharmaceuticals and technology has reached levels that may necessitate strategic incentives for niche sectors in emerging regions like Africa and Oceania to prevent a monochrome trade profile. Analysis of middle-market partners ranked 21–60 indicates that these Secondary Giants offer a higher strategic return on investment than saturated top-tier markets. Ultimately, Zurich is identified as a robust specialist that must maintain its import mosaic with care; the current rainbow-like diversification of sourcing serves as an essential safety net. Provided the trade corridor remains symmetrical and the import structure remains highly diversified, the Canton of Zurich retains its position as a resilient hub within the global trade ecosystem.
+
+## 2.8 Continental Equilibrium: The Zurich Trade Pulse Analysis
+
+This section analyses Zurich’s 2024 trade dynamics, distinguishing between its deeply integrated European relationships and its specialised global footprint. It utilises Butterfly Charts to identify the Trade Pulse of different regions, revealing where Zurich maintains industrial sovereignty and where it faces supply chain vulnerabilities.
+
+#INSERT PLOT HERE
+
+### 2.8.1 Regional Symbiosis and the European Hub Effect
+
+Zurich’s relationship with Europe is characterized by a Hub Effect, where high-value integration allows the Canton to act as an industrial Engine Room for the continent. The Europe Butterfly Chart serves as an economic mirror for 2024 trade, where the cyan right-side represents exports and the magenta left-side represents imports of raw materials and semi-finished products. A neon yellow diamond indicates the Profit Pulse, marking Zurich as a net gainer when positioned on the right. This visualization confirms Zurich's industrial sovereignty in sectors like Machinery, where it holds significant leverage that Europe cannot easily replace. However, sectors with longer import bars identify Supply Chain Anchors, signaling a strategic vulnerability where Zurich remains dependent on European production for essential downstream economic functions.
+
+### 2.8.2 Global Specialization and Industrial Sovereignty
+
+Beyond Europe, Zurich acts as a "Precision Engine" for distant continents, providing specialized goods that are difficult to replicate locally. In Asia, identified as a Sovereignty Zone, trade is dominated by Electronics and Machinery, upon which Asian manufacturing giants are fundamentally dependent. The Americas function as a Pharmaceutical Bridge, with Zurich acting as the Global Innovation Pharmacy by maintaining a high-leverage profit center through specialized medical exports. In Africa and Oceania, Zurich occupies an Infrastructure Niche, serving as a mission-critical partner by providing sophisticated industrial tools with minimal local competition. This global analysis proves that Zurich’s growth is driven by structural dominance in high-value niches rather than mere volume, providing the Canton with superior negotiating leverage even when compared to larger Economic Twins.
+
+### 2.8.3 Core Industrial Pillars
+
+The study identifies five strategic industries that serve as the backbone of Zurich’s global impact. Pharmaceuticals and Life Sciences remain the Global Anchor, accounting for over 52% of total Swiss exports in 2024 and maintaining a massive trade surplus. Financial and Insurance Services act as the Economic Heartbeat, generating 16% of regional output and providing the liquidity required for all other industries to scale. Machinery and Electronics function as the Industrial Engine, though this sector remains sensitive to the industrial health of partners like Germany and China. ICT and Artificial Intelligence serve as a Future Catalyst, with Zurich becoming a global hub for AI talent and research. Finally, Precision Instruments and Watches represent the Heritage Pillar, maintaining Niche Sovereignty through high-value margins. To maintain this position, Zurich must prioritize intellectual property protection in tech-heavy zones, diversify sourcing for import-heavy sectors to de-risk supply chains, and utilize its dominance in machinery as a gateway to introduce wider industrial offerings in emerging markets.
+
+## 2.9 The Meta-Analysis of Zurich’s Industrial DNA (2016–2024)
+
+This final analytical section utilizes Waffle Matrices to move beyond volume-based metrics, providing a structural deep-dive into the economic attention of Zurich's global trade partners. By adopting a zero-sum perspective, the study illustrates how specific industries compete for a finite percentage of total trade within a given region.
+
+#INSERT PLOT HERE
+
+### 2.9.1 Conceptual Rationale and Zero-Sum Modelling
+
+Standard bar and line charts frequently emphasise growth volumes while obscuring the underlying structural risks associated with industrial concentration. Waffle Matrices were selected for this study because they force a Zero-Sum View where a region possesses exactly 100 tiles of economic attention; for one industry to gain a tile, another must relinquish one. The primary objective of this visualisation is to map Industrial Colonisation, the process by which high-tech sectors systematically displace traditional industries within a continent’s trade profile. This approach reveals the trade-offs inherent in Zurich’s economic evolution, highlighting where efficiency gains may inadvertently lead to structural fragility.
+
+### 2.9.2 Methodological Implementation and Seat Allocation
+
+The transformation of raw trade data into structural matrices involved a rigorous three-step modeling process designed to preserve data diversity. Initially, industrial categories were standardized, mapping thirty-eight fragmented German classifications into concise, English sectoral pillars. These volumes were then normalized into relative percentages across every year, continent, and trade direction. To ensure that even the smallest sectors such as creative services or forestry were accurately represented, a seat-allocation algorithm based on the Largest Remainder Method was utilized. This mathematical engine ensures that minor but strategically relevant industries receive their fair representation in the 100-tile grid, preventing a generic Other category from swallowing the structural diversity of the data.
+
+### 2.9.3 Structural Revelations: Industrial Colonisation vs. Mosaic Resilience
+
+The structural study uncovered a profound divergence between Zurich’s export and import architectures. In Western markets, particularly North America and Europe, the export grid has become increasingly clogged by a few dominant sectors, signalling Zurich's transition into a specialised biotech and chemical hub. By 2024, pharmaceutical and chemical tiles have effectively evicted traditional manufacturing tiles, creating an extremely efficient export engine that simultaneously carries a significant single-point-of-failure risk. In contrast, Zurich’s relationship with Asia has undergone a Precision-Tech Takeover, where electronics and machinery tiles have seen a pronounced increase from 2016 to 2024, shifting the trade focus toward intelligence over molecules.
+
+Conversely, the import grid serves as a testament to Zurich’s Mosaic Resilience. Unlike the concentrated export engine, the import grid remains a highly diversified Rainbow of tiles. This granular dependency ensures that Zurich buys a small amount of everything from a vast number of sources, creating an inherent safety net where a disruption in a single global sector or region affects only a fraction of the total import heart.
+
+### 2.9.4 Synthesis and the Golden Cage Conclusion
+
+The cumulative evidence suggests that Zurich has entered a Golden Cage economy. This state is defined by a High Floor, where concentration in high-necessity sectors like pharmaceuticals ensures a consistent global demand, yet it is restricted by a Low Ceiling where these dominant sectors occupy over 70% of the structural grid, leaving virtually no room for new startup industries to scale. To mitigate this, the study identifies a need for a Tile-Vacancy policy to incentivise niche export sectors in emerging regions to prevent a monochrome trade profile. Ultimately, while the export matrices demonstrate Zurich’s global power through specialisation, the import matrices illustrate the Canton’s connection through a resilient, speckled mosaic. As long as this balance between a solid export engine and a diverse import heart is maintained, Zurich remains the most stable economic engine in the European network.
+
+# 3 Challenges, Limitations and Reflections
+
+## 3.1 Data Coverage and Country Matching
+
+A key challenge in this project was the harmonisation of country identifiers, particularly for the global maps. Some countries were not consistently recognised across datasets or spatial reference files, which occasionally led to missing or incorrectly mapped countries (e.g. France disappearing in early versions of the world map). This highlights a common limitation in international trade analysis: country names, codes, and geopolitical definitions do not always align cleanly across data sources and libraries. While these issues were resolved through manual checks and recoding, they underline the importance of careful validation when working with geospatial data.
+
+## 3.2 Aggregation and Loss of Temporal Detail
+
+Several visualisations rely on aggregation across years (e.g. world maps showing total trade volume across the full period). While this improves readability and highlights long-term patterns, it necessarily masks year-to-year changes, structural breaks, or short-lived shocks. As a result, countries with consistently high volumes dominate the visual narrative, while emerging or declining partners may appear less prominent despite meaningful dynamics in specific years.
+
+## 3.3 Ranking-based Visualisations
+
+The bump chart of top trade partners illustrates relative positions over time but comes with important limitations. Rankings hide absolute trade volumes, meaning that small rank changes can correspond to large or negligible volume differences. In addition, the choice of a top-10 cut-off introduces sensitivity: countries just outside the threshold may disappear entirely from the plot, even if their trade volume is close to those included. This makes rankings useful for comparative storytelling, but less suitable for precise quantitative interpretation.
+
+## 3.4 Growth and Volatility Measures
+
+The growth–volatility scatterplot summarises complex time series into two metrics: average growth and volatility. While this enables compact comparison across many partners, it also introduces simplifications. These measures are sensitive to extreme values and short-term fluctuations, and they do not capture structural changes within sub-periods. Furthermore, countries with similar positions in the plot may exhibit very different underlying trajectories, which are only visible when examining the full time series.
+
+## 3.5 Sector Aggregation and Heterogeneity
+
+Sectoral analyses group products into broad industry categories. While necessary for clarity, this aggregation can mask substantial heterogeneity within sectors, particularly for categories such as electronics & optical products or other goods (n.e.c.). As a result, observed trends may reflect shifts in specific sub-industries rather than the entire sector.
+
+## 3.6 Visual Design Trade-offs
+
+Producing clear, consistent, and readable visualisations, especially in dark mode, required careful tuning of colour palettes, legends, scales, and facet layouts. Several iterations were needed to ensure that legends, labels and colours were readable across plots. This process highlighted a broader trade-off between aesthetic clarity and information density, particularly when visualising multi-dimensional trade data.
+
+## 3.7 Reflections and Outlook
+
+Overall, the project demonstrates the strengths of exploratory trade analysis using visual methods, while also illustrating its limits. The findings should be interpreted as descriptive rather than causal, and as complementary views on the same underlying data rather than definitive conclusions. 
+Future extensions of this work could address these limitations by incorporating higher-frequency data, finer sectoral disaggregation, or rolling-window approaches to better capture structural breaks and regime shifts within Zurich’s trade system.
+
+## 3.8 Final Synthesis
+
+The findings in full portray Zurich as a highly specialised yet structurally resilient trading economy: one that derives strength from deep sectoral expertise on the export side while maintaining robustness through broad-based import diversification. This balance between concentration and mosaic resilience defines both the stability and the constraints of Zurich’s future trade trajectory.
+
+# 4 Sources 
+
+Canton of Zurich, Statistical Office. (n.d.). Warenimporte und -exporte im Kanton Zürich [Data set]. opendata.swiss.
+https://opendata.swiss/de/dataset/warenimporte-und-exporte-im-kanton-zurich
+
+World Bank. (2024). GDP (current US$) by country. World Bank Open Data.
+https://data.worldbank.org/indicator/NY.GDP.MKTP.CD
+
+R Core Team. (2024). R: A language and environment for statistical computing. R Foundation for Statistical Computing.
+https://www.r-project.org/
+
+Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., François, R.,
+Grolemund, G., Hayes, A., Henry, L., Hester, J., Kuhn, M., Pedersen, T. L.,
+Miller, E., Bache, S. M., Müller, K., Ooms, J., Robinson, D., Seidel, D. P.,
+Spinu, V., Takahashi, K., Vaughan, D., Wilke, C., Woo, K., & Yutani, H. (2019).
+Welcome to the tidyverse. Journal of Open Source Software, 4(43), 1686.
+https://doi.org/10.21105/joss.01686
+
+OpenAI. (2024). ChatGPT (GPT-4 / GPT-4.1). https://www.openai.com
+*****Here we need to mention how it was used as per the project doc****
+
+Google. (2024). Gemini: Large language model. https://gemini.google.com
+******Here we need to mention how it was used as per the project doc****
