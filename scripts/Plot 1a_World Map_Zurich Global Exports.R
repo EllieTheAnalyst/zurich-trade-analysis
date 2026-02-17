@@ -5,8 +5,8 @@ library(countrycode)
 library(scales)
 
 # ---- 1) Paths ----
-setwd("/Users/elenafuchs/Desktop/R_Project")
-trade_path <- "data/1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv"
+trade_path <- file.path("data", "1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv")
+stopifnot(file.exists(trade_path))
 
 # ---- 2) Load + clean ----
 df <- read_csv(trade_path, show_col_types = FALSE) %>%
