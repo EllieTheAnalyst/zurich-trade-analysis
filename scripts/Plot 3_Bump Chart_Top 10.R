@@ -2,8 +2,10 @@ library(tidyverse)
 library(ggrepel)
 
 # --- Load data ---
-df <- readr::read_csv("1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv") %>%
-  mutate(Year = as.integer(Year))
+trade_path <- file.path("data", "1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv")
+stopifnot(file.exists(trade_path))
+
+df <- readr::read_csv(trade_path, show_col_types = FALSE) %>%
 
 trade_focus <- "Export"
 top_n <- 10
