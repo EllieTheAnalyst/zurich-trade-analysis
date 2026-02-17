@@ -10,7 +10,10 @@ library(ggrepel)
 library(viridis)
 
 # 2. LOAD & CLEAN DATA (The "NA-Free" Pipeline)
-df <- read_csv("Cleaned_HR_Final_Report.csv")
+data_path <- file.path("data", "processed", "Cleaned_HR_Final_Report.csv")
+stopifnot(file.exists(data_path))
+
+df <- readr::read_csv(data_path, show_col_types = FALSE)
 
 # Comprehensive Shorter Names Map (Punchy Labels)
 short_names <- c(
