@@ -24,5 +24,3 @@ This folder contains modular R scripts used to build the full analytical pipelin
 - **Continental equilibrium**: butterfly charts (exports vs. imports by region)
 
 Each script is designed to be reproducible and modular, allowing individual components to be tested independently while remaining consistent with the project’s overall analytical framework.
-`
-
