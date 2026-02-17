@@ -4,8 +4,8 @@ library(rnaturalearth)
 library(countrycode)
 library(scales)
 
-setwd("/Users/elenafuchs/Desktop/R_Project")
-trade_path <- "data/1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv"
+trade_path <- file.path("data", "1_Total_Countrywise_IndustryWise_YearWise_Export_Import.csv")
+stopifnot(file.exists(trade_path))
 
 df <- read_csv(trade_path, show_col_types = FALSE) %>%
   mutate(
