@@ -3,7 +3,10 @@ library(tidyverse)
 library(scales)
 
 # 2. LOAD DATA
-df <- read_csv("Cleaned_HR_Final_Report.csv")
+data_path <- file.path("data", "processed", "Cleaned_HR_Final_Report.csv")
+stopifnot(file.exists(data_path))
+
+df <- readr::read_csv(data_path, show_col_types = FALSE)
 
 # 3. COMPREHENSIVE SHORT-NAME MAPPING
 short_names <- c(
